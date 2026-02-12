@@ -220,7 +220,7 @@ build  cert.pem  key.pem  LICENSE  pyproject.toml  README.md  rootCA.key  rootCA
 
 | ⚙️ Parameter  |                        📜 Description                         |
 | :----------: | :----------------------------------------------------------: |
-|  `--motion`  | **Enable motion control mode** When enabled, the teleoperation program can run alongside the robot’s motion control program.In **hand tracking** mode, the [R3 controller](https://www.unitree.com/cn/R3) can be used to control normal robot walking; in **controller tracking** mode, joysticks can also control the robot’s movement. |
+|  `--motion`  | **Enable motion control mode** When enabled, the teleoperation program can run alongside the robot’s motion control program.In **hand tracking** mode, the [R3 controller](https://www.unitree.com/cn/R3) can be used to control normal robot walking; in **controller tracking** mode, joysticks can also control the robot’s movement.<br />Note: Only `Regular mode` (R1+X) is supported, `Running mode` (R2+A) is not supported. |
 | `--headless` | **Enable headless mode** For running the program on devices without a display, e.g., the Development Computing Unit (PC2). |
 |   `--sim`    | **Enable [simulation mode](https://github.com/unitreerobotics/unitree_sim_isaaclab)** |
 |   `--ipc`    | **Inter-process communication mode** Allows controlling the xr_teleoperate program’s state via IPC. Suitable for interaction with agent programs. |
@@ -530,3 +530,12 @@ This code builds upon following open-source code-bases. Please visit the URLs to
 8. https://github.com/Dingry/BunnyVisionPro
 9. https://github.com/unitreerobotics/unitree_sdk2_python
 10. https://github.com/ARCLab-MIT/beavr-bot
+
+## 7. 📝 Citation
+
+@misc{xr-teleoperate,
+  author       = {Unitree},
+  title        = {XR-Teleoperate: An Open-Source Teleoperation Framework and Data Collection Toolkit for Embodied Intelligence},
+  howpublished = {\url{https://github.com/unitreerobotics/xr_teleoperate}},
+  year         = {2025},
+}

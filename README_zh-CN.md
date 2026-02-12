@@ -232,7 +232,7 @@ build  cert.pem  key.pem  LICENSE  pyproject.toml  README.md  rootCA.key  rootCA
 
 |    ⚙️ 参数    |                            📜 说明                            |
 | :----------: | :----------------------------------------------------------: |
-|  `--motion`  | 【启用**运动控制**模式】<br />开启本模式后，可在机器人运控程序运行下进行遥操作程序。<br />**手势跟踪**模式下，可使用 [R3遥控器](https://www.unitree.com/cn/R3) 控制机器人正常行走；**手柄跟踪**模式下，也可使用[手柄摇杆控制机器人行走](https://github.com/unitreerobotics/xr_teleoperate/blob/375cdc27605de377c698e2b89cad0e5885724ca6/teleop/teleop_hand_and_arm.py#L247-L257)。 |
+|  `--motion`  | 【启用**运动控制**模式】<br />开启本模式后，可在机器人运控程序运行下进行遥操作程序。<br />**手势跟踪**模式下，可使用 [R3遥控器](https://www.unitree.com/cn/R3) 控制机器人正常行走；**手柄跟踪**模式下，也可使用[手柄摇杆控制机器人行走](https://github.com/unitreerobotics/xr_teleoperate/blob/375cdc27605de377c698e2b89cad0e5885724ca6/teleop/teleop_hand_and_arm.py#L247-L257)。<br />注意：只支持 `Regular mode` (R1+X)，不支持 `Running mode` (R2+A) |
 | `--headless` | 【启用**无图形界面**模式】<br />适用于本程序部署在开发计算单元（PC2）等无显示器情况 |
 |   `--sim`    | 【启用[**仿真模式**](https://github.com/unitreerobotics/unitree_sim_isaaclab)】 |
 |   `--ipc`    | 【进程间通信模式】<br />可通过进程间通信来控制 xr_teleoperate 程序的状态切换，此模式适合与代理程序进行交互 |
@@ -559,3 +559,12 @@ xr_teleoperate/
 8. https://github.com/Dingry/BunnyVisionPro
 9. https://github.com/unitreerobotics/unitree_sdk2_python
 10. https://github.com/ARCLab-MIT/beavr-bot
+
+## 7. 📝 引用
+
+@misc{xr-teleoperate,
+  author       = {Unitree},
+  title        = {XR-Teleoperate: An Open-Source Teleoperation Framework and Data Collection Toolkit for Embodied Intelligence},
+  howpublished = {\url{https://github.com/unitreerobotics/xr_teleoperate}},
+  year         = {2025},
+}
