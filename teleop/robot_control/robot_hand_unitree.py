@@ -224,6 +224,223 @@ class Dex3_1_Right_JointIndex(IntEnum):
     kRightHandMiddle1 = 6
 
 
+class Dex3_1_ButtonController:
+    """Controller for dex3 hand using Quest controller buttons/triggers.
+
+    Maps controller inputs to dex3 finger joints:
+    - Trigger (analog) -> Index finger (2 DOF, curl)
+    - Squeeze/Grip (analog) -> Middle finger (2 DOF, curl)
+    - Joystick Y (forward/back) -> Thumb joints 1 & 2 (curl open/close)
+    - Joystick X (left/right) -> Thumb joint 0 (swivel)
+    """
+
+    def __init__(self, left_ctrl_array_in, right_ctrl_array_in, dual_hand_data_lock=None, dual_hand_state_array_out=None,
+                       dual_hand_action_array_out=None, fps=100.0, simulation_mode=False):
+        """
+        left_ctrl_array_in: [input] Left controller Array of 4 doubles: [triggerValue, squeezeValue, thumbstickX, thumbstickY]
+        right_ctrl_array_in: [input] Right controller Array of 4 doubles: [triggerValue, squeezeValue, thumbstickX, thumbstickY]
+        dual_hand_data_lock: Data synchronization lock
+        dual_hand_state_array_out: [output] Return left(7), right(7) hand motor state
+        dual_hand_action_array_out: [output] Return left(7), right(7) hand motor action
+        fps: Control frequency
+        simulation_mode: Whether to use simulation mode
+        """
+        logger_mp.info("Initialize Dex3_1_ButtonController...")
+
+        self.fps = fps
+        self.simulation_mode = simulation_mode
+        self.smooth_filter = WeightedMovingFilter(np.array([0.5, 0.3, 0.2]), Dex3_Num_Motors * 2)
+
+        # initialize handcmd publisher and handstate subscriber
+        self.LeftHandCmb_publisher = ChannelPublisher(kTopicDex3LeftCommand, HandCmd_)
+        self.LeftHandCmb_publisher.Init()
+        self.RightHandCmb_publisher = ChannelPublisher(kTopicDex3RightCommand, HandCmd_)
+        self.RightHandCmb_publisher.Init()
+
+        self.LeftHandState_subscriber = ChannelSubscriber(kTopicDex3LeftState, HandState_)
+        self.LeftHandState_subscriber.Init()
+        self.RightHandState_subscriber = ChannelSubscriber(kTopicDex3RightState, HandState_)
+        self.RightHandState_subscriber.Init()
+
+        # Shared Arrays for hand states
+        self.left_hand_state_array  = Array('d', Dex3_Num_Motors, lock=True)
+        self.right_hand_state_array = Array('d', Dex3_Num_Motors, lock=True)
+
+        # initialize subscribe thread
+        self.subscribe_state_thread = threading.Thread(target=self._subscribe_hand_state)
+        self.subscribe_state_thread.daemon = True
+        self.subscribe_state_thread.start()
+
+        while True:
+            if any(self.left_hand_state_array) and any(self.right_hand_state_array):
+                break
+            time.sleep(0.01)
+            logger_mp.warning("[Dex3_1_ButtonController] Waiting to subscribe dds...")
+        logger_mp.info("[Dex3_1_ButtonController] Subscribe dds ok.")
+
+        control_thread = threading.Thread(
+            target=self.control_loop,
+            args=(left_ctrl_array_in, right_ctrl_array_in, self.left_hand_state_array, self.right_hand_state_array,
+                  dual_hand_data_lock, dual_hand_state_array_out, dual_hand_action_array_out))
+        control_thread.daemon = True
+        control_thread.start()
+
+        logger_mp.info("Initialize Dex3_1_ButtonController OK!")
+
+    def _subscribe_hand_state(self):
+        while True:
+            left_hand_msg  = self.LeftHandState_subscriber.Read()
+            right_hand_msg = self.RightHandState_subscriber.Read()
+            if left_hand_msg is not None and right_hand_msg is not None:
+                for idx, id in enumerate(Dex3_1_Left_JointIndex):
+                    self.left_hand_state_array[idx] = left_hand_msg.motor_state[id].q
+                for idx, id in enumerate(Dex3_1_Right_JointIndex):
+                    self.right_hand_state_array[idx] = right_hand_msg.motor_state[id].q
+            time.sleep(0.002)
+
+    class _RIS_Mode:
+        def __init__(self, id=0, status=0x01, timeout=0):
+            self.motor_mode = 0
+            self.id = id & 0x0F
+            self.status = status & 0x07
+            self.timeout = timeout & 0x01
+
+        def _mode_to_uint8(self):
+            self.motor_mode |= (self.id & 0x0F)
+            self.motor_mode |= (self.status & 0x07) << 4
+            self.motor_mode |= (self.timeout & 0x01) << 7
+            return self.motor_mode
+
+    def ctrl_dual_hand(self, left_q_target, right_q_target):
+        """set current left, right hand motor state target q"""
+        for idx, id in enumerate(Dex3_1_Left_JointIndex):
+            self.left_msg.motor_cmd[id].q = left_q_target[idx]
+        for idx, id in enumerate(Dex3_1_Right_JointIndex):
+            self.right_msg.motor_cmd[id].q = right_q_target[idx]
+
+        self.LeftHandCmb_publisher.Write(self.left_msg)
+        self.RightHandCmb_publisher.Write(self.right_msg)
+
+    @staticmethod
+    def _compute_targets(trigger_val, squeeze_val, stick_x, stick_y, side):
+        """Compute 7 joint targets from controller inputs.
+
+        Args:
+            trigger_val: Trigger analog (10.0=released, 0.0=fully pressed) -> index finger
+            squeeze_val: Squeeze analog (0.0=released, 1.0=fully pressed) -> middle finger
+            stick_x: Thumbstick X (-1..+1) -> thumb swivel (joint 0)
+            stick_y: Thumbstick Y (-1 forward, +1 back) -> thumb curl (joints 1 & 2)
+            side: 'left' or 'right'
+
+        Returns:
+            np.array of 7 joint targets
+        """
+        index_frac  = np.clip((10.0 - trigger_val) / 10.0, 0.0, 1.0)
+        middle_frac = np.clip(squeeze_val, 0.0, 1.0)
+        # Thumb curl: push stick forward (Y<0) to close
+        thumb_curl_frac = np.clip(-stick_y, 0.0, 1.0)
+        # Thumb swivel: direct proportional
+        thumb_swivel_frac = np.clip(stick_x, -1.0, 1.0)
+
+        q = np.zeros(Dex3_Num_Motors)
+
+        if side == 'right':
+            # Right: [thumb0, thumb1, thumb2, index0, index1, middle0, middle1]
+            # URDF limits: thumb0[-1.047,1.047] thumb1[-0.920,0.724] thumb2[-1.745,0]
+            #              index0[0,1.571] index1[0,1.745] middle0[0,1.571] middle1[0,1.745]
+            q[0] = thumb_swivel_frac * 1.047
+            q[1] = -0.920 * thumb_curl_frac
+            q[2] = -1.745 * thumb_curl_frac
+            q[3] = 1.571 * index_frac
+            q[4] = 1.745 * index_frac
+            q[5] = 1.571 * middle_frac
+            q[6] = 1.745 * middle_frac
+        else:
+            # Left: [thumb0, thumb1, thumb2, middle0, middle1, index0, index1]
+            # URDF limits: thumb0[-1.047,1.047] thumb1[-0.724,0.920] thumb2[0,1.745]
+            #              middle0[-1.571,0] middle1[-1.745,0] index0[-1.571,0] index1[-1.745,0]
+            q[0] = -thumb_swivel_frac * 1.047
+            q[1] =  0.920 * thumb_curl_frac
+            q[2] =  1.745 * thumb_curl_frac
+            q[3] = -1.571 * middle_frac
+            q[4] = -1.745 * middle_frac
+            q[5] = -1.571 * index_frac
+            q[6] = -1.745 * index_frac
+
+        return q
+
+    def control_loop(self, left_ctrl_array_in, right_ctrl_array_in, left_hand_state_array, right_hand_state_array,
+                           dual_hand_data_lock=None, dual_hand_state_array_out=None, dual_hand_action_array_out=None):
+        self.running = True
+
+        q = 0.0
+        dq = 0.0
+        tau = 0.0
+        kp = 1.5
+        kd = 0.2
+
+        # initialize dex3-1's left hand cmd msg
+        self.left_msg  = unitree_hg_msg_dds__HandCmd_()
+        for id in Dex3_1_Left_JointIndex:
+            ris_mode = self._RIS_Mode(id = id, status = 0x01)
+            motor_mode = ris_mode._mode_to_uint8()
+            self.left_msg.motor_cmd[id].mode = motor_mode
+            self.left_msg.motor_cmd[id].q    = q
+            self.left_msg.motor_cmd[id].dq   = dq
+            self.left_msg.motor_cmd[id].tau  = tau
+            self.left_msg.motor_cmd[id].kp   = kp
+            self.left_msg.motor_cmd[id].kd   = kd
+
+        # initialize dex3-1's right hand cmd msg
+        self.right_msg = unitree_hg_msg_dds__HandCmd_()
+        for id in Dex3_1_Right_JointIndex:
+            ris_mode = self._RIS_Mode(id = id, status = 0x01)
+            motor_mode = ris_mode._mode_to_uint8()
+            self.right_msg.motor_cmd[id].mode = motor_mode
+            self.right_msg.motor_cmd[id].q    = q
+            self.right_msg.motor_cmd[id].dq   = dq
+            self.right_msg.motor_cmd[id].tau  = tau
+            self.right_msg.motor_cmd[id].kp   = kp
+            self.right_msg.motor_cmd[id].kd   = kd
+
+        try:
+            while self.running:
+                start_time = time.time()
+
+                # Read controller inputs: [triggerValue, squeezeValue, thumbstickX, thumbstickY]
+                with left_ctrl_array_in.get_lock():
+                    l_trigger, l_squeeze, l_stick_x, l_stick_y = left_ctrl_array_in[:]
+                with right_ctrl_array_in.get_lock():
+                    r_trigger, r_squeeze, r_stick_x, r_stick_y = right_ctrl_array_in[:]
+
+                left_q_target  = self._compute_targets(l_trigger, l_squeeze, l_stick_x, l_stick_y, 'left')
+                right_q_target = self._compute_targets(r_trigger, r_squeeze, r_stick_x, r_stick_y, 'right')
+
+                # Get current state
+                state_data  = np.concatenate((np.array(left_hand_state_array[:]), np.array(right_hand_state_array[:])))
+                action_data = np.concatenate((left_q_target, right_q_target))
+
+                # Apply smoothing filter
+                self.smooth_filter.add_data(action_data)
+                action_data = self.smooth_filter.filtered_data
+                left_q_target  = action_data[:Dex3_Num_Motors]
+                right_q_target = action_data[Dex3_Num_Motors:]
+
+                if dual_hand_state_array_out and dual_hand_action_array_out:
+                    with dual_hand_data_lock:
+                        dual_hand_state_array_out[:]  = state_data
+                        dual_hand_action_array_out[:] = action_data
+
+                self.ctrl_dual_hand(left_q_target, right_q_target)
+
+                current_time = time.time()
+                time_elapsed = current_time - start_time
+                sleep_time = max(0, (1 / self.fps) - time_elapsed)
+                time.sleep(sleep_time)
+        finally:
+            logger_mp.info("Dex3_1_ButtonController has been closed.")
+
+
 kTopicGripperLeftCommand = "rt/dex1/left/cmd"
 kTopicGripperLeftState = "rt/dex1/left/state"
 kTopicGripperRightCommand = "rt/dex1/right/cmd"
