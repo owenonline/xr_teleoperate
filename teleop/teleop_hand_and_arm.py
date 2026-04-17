@@ -277,6 +277,9 @@ if __name__ == '__main__':
                 if xr_need_local_img:
                     if head_img is not None and head_img.bgr is not None:
                         tv_wrapper.render_to_xr(head_img.bgr)
+            if camera_config.get('color_camera', {}).get('enable_zmq', False):
+                if args.record:
+                    color_img = img_client.get_color_frame()
             if camera_config['left_wrist_camera']['enable_zmq']:
                 if args.record:
                     left_wrist_img = img_client.get_left_wrist_frame()
@@ -416,37 +419,40 @@ if __name__ == '__main__':
                 if RECORD_RUNNING:
                     colors = {}
                     depths = {}
+                    cidx = 0
                     if camera_config['head_camera']['binocular']:
                         if head_img is not None:
-                            colors[f"color_{0}"] = head_img.bgr[:, :camera_config['head_camera']['image_shape'][1]//2]
-                            colors[f"color_{1}"] = head_img.bgr[:, camera_config['head_camera']['image_shape'][1]//2:]
+                            colors[f"color_{cidx}"] = head_img.bgr[:, :camera_config['head_camera']['image_shape'][1]//2]
+                            cidx += 1
+                            colors[f"color_{cidx}"] = head_img.bgr[:, camera_config['head_camera']['image_shape'][1]//2:]
+                            cidx += 1
                         else:
                             logger_mp.warning("Head image is None!")
-                        if camera_config['left_wrist_camera']['enable_zmq']:
-                            if left_wrist_img is not None:
-                                colors[f"color_{2}"] = left_wrist_img.bgr
-                            else:
-                                logger_mp.warning("Left wrist image is None!")
-                        if camera_config['right_wrist_camera']['enable_zmq']:
-                            if right_wrist_img is not None:
-                                colors[f"color_{3}"] = right_wrist_img.bgr
-                            else:
-                                logger_mp.warning("Right wrist image is None!")
+                            cidx += 2
                     else:
                         if head_img is not None:
-                            colors[f"color_{0}"] = head_img
+                            colors[f"color_{cidx}"] = head_img.bgr
                         else:
                             logger_mp.warning("Head image is None!")
-                        if camera_config['left_wrist_camera']['enable_zmq']:
-                            if left_wrist_img is not None:
-                                colors[f"color_{1}"] = left_wrist_img.bgr
-                            else:
-                                logger_mp.warning("Left wrist image is None!")
-                        if camera_config['right_wrist_camera']['enable_zmq']:
-                            if right_wrist_img is not None:
-                                colors[f"color_{2}"] = right_wrist_img.bgr
-                            else:
-                                logger_mp.warning("Right wrist image is None!")
+                        cidx += 1
+                    if camera_config.get('color_camera', {}).get('enable_zmq', False):
+                        if color_img is not None and color_img.bgr is not None:
+                            colors[f"color_{cidx}"] = color_img.bgr
+                        else:
+                            logger_mp.warning("Color camera image is None!")
+                        cidx += 1
+                    if camera_config['left_wrist_camera']['enable_zmq']:
+                        if left_wrist_img is not None:
+                            colors[f"color_{cidx}"] = left_wrist_img.bgr
+                        else:
+                            logger_mp.warning("Left wrist image is None!")
+                        cidx += 1
+                    if camera_config['right_wrist_camera']['enable_zmq']:
+                        if right_wrist_img is not None:
+                            colors[f"color_{cidx}"] = right_wrist_img.bgr
+                        else:
+                            logger_mp.warning("Right wrist image is None!")
+                        cidx += 1
                     states = {
                         "left_arm": {                                                                    
                             "qpos":   left_arm_state.tolist(),    # numpy.array -> list
