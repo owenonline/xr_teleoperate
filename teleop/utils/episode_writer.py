@@ -6,7 +6,7 @@ import numpy as np
 import time
 from .rerun_visualizer import RerunLogger
 from queue import Queue, Empty
-from threading import Thread
+from threading import Thread, Event
 import logging_mp
 logger_mp = logging_mp.getLogger(__name__)
 
@@ -54,8 +54,9 @@ class EpisodeWriter():
         # Initialize the queue and worker thread
         self.item_data_queue = Queue(-1)
         self.stop_worker = False
-        self.need_save = False  # Flag to indicate when save_episode is triggered
-        self.worker_thread = Thread(target=self.process_queue)
+        self.need_save = False
+        self.save_done_event = Event()
+        self.worker_thread = Thread(target=self.process_queue, daemon=True)
         self.worker_thread.start()
 
         logger_mp.info("==> EpisodeWriter initialized successfully.\n")
@@ -119,9 +120,6 @@ class EpisodeWriter():
             f.write('"data": [\n')
         self.first_item = True   # Flag to handle commas in JSON array
 
-        if self.rerun_log:
-            self.online_logger = RerunLogger(prefix="online/", IdxRangeBoundary = 60, memory_limit="300MB")
-
         self.is_available = False  # After the episode is created, the class is marked as unavailable until the episode is successfully saved
         logger_mp.info(f"==> New episode created: {self.episode_dir}")
         return True  # Return True if the episode is successfully created
@@ -145,7 +143,6 @@ class EpisodeWriter():
 
     def process_queue(self):
         while not self.stop_worker or not self.item_data_queue.empty():
-            # Process items in the queue
             try:
                 item_data = self.item_data_queue.get(timeout=1)
                 try:
@@ -155,10 +152,10 @@ class EpisodeWriter():
                 self.item_data_queue.task_done()
             except Empty:
                 pass
-        
-            # Check if save_episode was triggered
+
             if self.need_save and self.item_data_queue.empty():
                 self._save_episode()
+                self.save_done_event.set()
 
     def _process_item_data(self, item_data):
         idx = item_data['idx']
@@ -196,38 +193,41 @@ class EpisodeWriter():
             f.write(json.dumps(item_data, ensure_ascii=False, indent=4))
             self.first_item = False
 
-        # Log data if necessary
-        if self.rerun_log:
+        if self.rerun_log and not self.need_save:
             curent_record_time = time.time()
             logger_mp.info(f"==> episode_id:{self.episode_id}  item_id:{idx}  current_time:{curent_record_time}")
             self.rerun_logger.log_item_data(item_data)
 
     def save_episode(self):
-        """
-        Trigger the save operation. This sets the save flag, and the process_queue thread will handle it.
-        """
-        self.need_save = True  # Set the save flag
-        logger_mp.info(f"==> Episode saved start...")
+        remaining = self.item_data_queue.qsize()
+        logger_mp.info(f"==> Episode save start... ({remaining} items remaining)")
+        self.save_done_event.clear()
+        self.need_save = True
+
+        while not self.save_done_event.wait(timeout=5):
+            remaining_now = self.item_data_queue.qsize()
+            alive = self.worker_thread.is_alive()
+            logger_mp.info(f"==> Saving... queue: ~{remaining_now}, worker alive: {alive}")
+
+            if not alive:
+                logger_mp.error("==> Worker thread died! Forcing save.")
+                self._save_episode()
+                self.save_done_event.set()
+                return
+
+        logger_mp.info("==> Episode save complete.")
 
     def _save_episode(self):
-        """
-        Save the episode data to a JSON file.
-        """
+        if self.is_available:
+            return
         with open(self.json_path, "a", encoding="utf-8") as f:
-            f.write("\n]\n}")      # Close the JSON array and object
-
-        self.need_save = False     # Reset the save flag
-        self.is_available = True   # Mark the class as available after saving
+            f.write("\n]\n}")
+        self.need_save = False
+        self.is_available = True
         logger_mp.info(f"==> Episode saved successfully to {self.json_path}.")
 
     def close(self):
-        """
-        Stop the worker thread and ensure all tasks are completed.
-        """
-        self.item_data_queue.join()
-        if not self.is_available:  # If self.is_available is False, it means there is still data not saved.
+        if not self.is_available:
             self.save_episode()
-        while not self.is_available:
-            time.sleep(0.01)
         self.stop_worker = True
-        self.worker_thread.join()
+        self.worker_thread.join(timeout=10)
