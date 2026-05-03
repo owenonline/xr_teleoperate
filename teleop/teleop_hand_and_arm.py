@@ -16,6 +16,8 @@ from unitree_sdk2py.core.channel import ChannelFactoryInitialize # dds
 
 # Default manipulation port for run_g1_server_combined.py (locomotion uses 6000).
 MANIP_PORT = 6002
+os.environ.setdefault("LOWCMD_PORT", str(MANIP_PORT))
+
 from televuer import TeleVuerWrapper
 from teleop.robot_control.robot_arm import G1_29_ArmController, G1_23_ArmController, H1_2_ArmController, H1_ArmController
 from teleop.robot_control.robot_arm_ik import G1_29_ArmIK, G1_23_ArmIK, H1_2_ArmIK, H1_ArmIK
@@ -106,8 +108,19 @@ if __name__ == '__main__':
         if args.sim:
             ChannelFactoryInitialize(1, networkInterface=args.network_interface)
         else:
-            from teleop.zmq_channel import init_zmq_channels
-            init_zmq_channels(robot_ip=args.img_server_ip, lowcmd_port=args.manip_port)
+            # DDS for hand controllers (HandCmd_/HandState_ stay on DDS)
+            ChannelFactoryInitialize(0, networkInterface=args.network_interface)
+            # ZMQ for arm controller (LowCmd/LowState → manip port)
+            os.environ["LOWCMD_PORT"] = str(args.manip_port)
+            from teleop.unitree_sdk2_socket import (
+                ChannelFactoryInitialize as _ZmqCFI,
+                ChannelPublisher as _ZmqPub,
+                ChannelSubscriber as _ZmqSub,
+            )
+            _ZmqCFI(config=type("C", (), {"robot_ip": args.img_server_ip})())
+            import teleop.robot_control.robot_arm as _arm_mod
+            _arm_mod.ChannelPublisher = _ZmqPub
+            _arm_mod.ChannelSubscriber = _ZmqSub
 
         # ipc communication mode. client usage: see utils/ipc.py
         if args.ipc:
@@ -140,10 +153,12 @@ if __name__ == '__main__':
                                      )
         
         # motion mode (G1: Regular mode R1+X, not Running mode R2+A)
+        # When using ZMQ (non-sim), run_g1_server_combined already handles
+        # mode switching — skip MotionSwitcher which requires DDS.
         if args.motion:
             if args.input_mode == "controller":
                 loco_wrapper = LocoClientWrapper()
-        else:
+        elif args.sim:
             motion_switcher = MotionSwitcher()
             status, result = motion_switcher.Enter_Debug_Mode()
             logger_mp.info(f"Enter debug mode: {'Success' if status == 0 else 'Failed'}")

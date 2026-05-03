@@ -110,23 +110,15 @@ class G1_29_ArmController:
         logger_mp.debug(f"Current two arms motor state q:\n{self.get_current_dual_arm_q()}\n")
         logger_mp.info("Lock all joints except two arms...")
 
-        arm_indices = set(member.value for member in G1_29_JointArmIndex)
-        for id in G1_29_JointIndex:
+        self._active = True
+        for id in G1_29_JointArmIndex:
             self.msg.motor_cmd[id].mode = 1
-            if id.value in arm_indices:
-                if self._Is_wrist_motor(id):
-                    self.msg.motor_cmd[id].kp = self.kp_wrist
-                    self.msg.motor_cmd[id].kd = self.kd_wrist
-                else:
-                    self.msg.motor_cmd[id].kp = self.kp_low
-                    self.msg.motor_cmd[id].kd = self.kd_low
+            if self._Is_wrist_motor(id):
+                self.msg.motor_cmd[id].kp = self.kp_wrist
+                self.msg.motor_cmd[id].kd = self.kd_wrist
             else:
-                if self._Is_weak_motor(id):
-                    self.msg.motor_cmd[id].kp = self.kp_low
-                    self.msg.motor_cmd[id].kd = self.kd_low
-                else:
-                    self.msg.motor_cmd[id].kp = self.kp_high
-                    self.msg.motor_cmd[id].kd = self.kd_high
+                self.msg.motor_cmd[id].kp = self.kp_low
+                self.msg.motor_cmd[id].kd = self.kd_low
             self.msg.motor_cmd[id].q  = self.all_motor_q[id]
         logger_mp.info("Lock OK!")
 
@@ -236,6 +228,18 @@ class G1_29_ArmController:
 
     def speed_gradual_max(self, t = 5.0):
         '''Parameter t is the total time required for arms velocity to gradually increase to its maximum value, in seconds. The default is 5.0.'''
+        if not self._active:
+            self.all_motor_q = self.get_current_motor_q()
+            for id in G1_29_JointArmIndex:
+                self.msg.motor_cmd[id].mode = 1
+                if self._Is_wrist_motor(id):
+                    self.msg.motor_cmd[id].kp = self.kp_wrist
+                    self.msg.motor_cmd[id].kd = self.kd_wrist
+                else:
+                    self.msg.motor_cmd[id].kp = self.kp_low
+                    self.msg.motor_cmd[id].kd = self.kd_low
+                self.msg.motor_cmd[id].q = self.all_motor_q[id]
+            self._active = True
         self._gradual_start_time = time.time()
         self._gradual_time = t
         self._speed_gradual_max = True
