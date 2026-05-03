@@ -6,13 +6,16 @@ import logging_mp
 logging_mp.basicConfig(level=logging_mp.INFO)
 logger_mp = logging_mp.getLogger(__name__)
 
-import os 
+import os
 import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from unitree_sdk2py.core.channel import ChannelFactoryInitialize # dds 
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize # dds
+
+# Default manipulation port for run_g1_server_combined.py (locomotion uses 6000).
+MANIP_PORT = 6002
 from televuer import TeleVuerWrapper
 from teleop.robot_control.robot_arm import G1_29_ArmController, G1_23_ArmController, H1_2_ArmController, H1_ArmController
 from teleop.robot_control.robot_arm_ik import G1_29_ArmIK, G1_23_ArmIK, H1_2_ArmIK, H1_ArmIK
@@ -93,15 +96,18 @@ if __name__ == '__main__':
     parser.add_argument('--task-goal', type = str, default = 'pick up cube.', help = 'task goal for recording at json file')
     parser.add_argument('--task-desc', type = str, default = 'task description', help = 'task description for recording at json file')
     parser.add_argument('--task-steps', type = str, default = 'step1: do this; step2: do that;', help = 'task steps for recording at json file')
+    parser.add_argument('--manip-port', type=int, default=MANIP_PORT, help=f'ZMQ port for manipulation commands to run_g1_server_combined (default: {MANIP_PORT})')
 
     args = parser.parse_args()
     logger_mp.info(f"args: {args}")
 
     try:
-        # setup dds communication domains id
+        # setup communication channels
         if args.sim:
             ChannelFactoryInitialize(1, networkInterface=args.network_interface)
         else:
+            from lerobot.robots.unitree_g1 import unitree_sdk2_socket
+            unitree_sdk2_socket.LOWCMD_PORT = args.manip_port
             ChannelFactoryInitialize(0, networkInterface=args.network_interface)
 
         # ipc communication mode. client usage: see utils/ipc.py
