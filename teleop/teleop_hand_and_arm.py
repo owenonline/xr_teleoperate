@@ -106,9 +106,8 @@ if __name__ == '__main__':
         if args.sim:
             ChannelFactoryInitialize(1, networkInterface=args.network_interface)
         else:
-            from lerobot.robots.unitree_g1 import unitree_sdk2_socket
-            unitree_sdk2_socket.LOWCMD_PORT = args.manip_port
-            ChannelFactoryInitialize(0, networkInterface=args.network_interface)
+            from teleop.zmq_channel import init_zmq_channels
+            init_zmq_channels(robot_ip=args.img_server_ip, lowcmd_port=args.manip_port)
 
         # ipc communication mode. client usage: see utils/ipc.py
         if args.ipc:
